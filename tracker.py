@@ -4,6 +4,7 @@ Handles YOLO detection and object tracking logic
 """
 
 import numpy as np
+import cv2
 from ultralytics import YOLO
 from config import TrackingConfig
 
@@ -27,6 +28,7 @@ class ObjectTracker:
         self.selected_bbox = None
         self.selected_class = TrackingConfig.SELECTED_CLASS
         self.track_largest = TrackingConfig.TRACK_LARGEST
+        self.is_manual_tracking = False  # Flag for manual tracking
         
         # Lost frame handling
         self.lost_frames = 0
@@ -38,13 +40,19 @@ class ObjectTracker:
         self.prev_time = None
         self.prev_area = None
         
+        # Optical flow tracking for manual selections
+        self.prev_gray = None
+        self.tracking_points = None
+        
         self._load_model()
     
     def _load_model(self):
         """Load YOLO model"""
         print(f"Loading YOLO model: {self.model_path}")
         self.model = YOLO(self.model_path)
-        print("Model loaded successfully")
+        # Force CPU to avoid CUDA library issues
+        self.model.to('cpu')
+        print("Model loaded successfully (using CPU)")
     
     def detect(self, frame):
         """
@@ -56,17 +64,26 @@ class ObjectTracker:
         Returns:
             list: List of detection dictionaries
         """
+        # COCO class IDs: car=2, traffic light=9
+        ALLOWED_CLASSES = [2, 9]  # Only detect cars and traffic lights
+        
+        # Use tracker mode with higher IOU threshold for stability
         results = self.model.track(frame, persist=True, verbose=False, 
-                                   conf=self.confidence_threshold)
+                                   conf=self.confidence_threshold,
+                                   iou=0.5,  # Higher IOU threshold for more stable tracking
+                                   tracker="bytetrack.yaml",  # Use ByteTrack for better stability
+                                   classes=ALLOWED_CLASSES)  # Filter to only cars and traffic lights
         detections = []
         
         for result in results:
             boxes = result.boxes
             for box in boxes:
                 conf = float(box.conf[0])
-                if conf >= self.confidence_threshold:
+                cls = int(box.cls[0])
+                
+                # Double-check class filtering
+                if conf >= self.confidence_threshold and cls in ALLOWED_CLASSES:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cls = int(box.cls[0])
                     class_name = self.model.names[cls]
                     track_id = int(box.id[0]) if box.id is not None else None
                     
@@ -83,17 +100,22 @@ class ObjectTracker:
         
         return detections
     
-    def select_target(self, detections, frame_center):
+    def select_target(self, detections, frame_center, frame=None):
         """
         Select target object from detections
         
         Args:
             detections: List of detections
             frame_center: Tuple of (center_x, center_y)
+            frame: Current frame (needed for optical flow tracking)
             
         Returns:
             dict: Selected detection or None
         """
+        # If manual tracking is active, use optical flow
+        if self.is_manual_tracking and frame is not None:
+            return self._track_manual_selection(frame)
+        
         if not detections:
             if self.tracking_locked:
                 self.lost_frames += 1
@@ -202,7 +224,100 @@ class ObjectTracker:
             self.selected_bbox = detection['bbox']
             self.last_known_bbox = detection['bbox']
             self.lost_frames = 0
-            print(f"Locked to: {detection['class_name']}")
+            
+            # Check if it's a manual selection
+            if detection.get('class') == -1:
+                self.is_manual_tracking = True
+                print(f"Locked to: Manual Selection")
+            else:
+                self.is_manual_tracking = False
+                print(f"Locked to: {detection['class_name']}")
+    
+    def _initialize_optical_flow(self, frame, bbox):
+        """Initialize optical flow tracking points"""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        x1, y1, x2, y2 = bbox
+        
+        # Create a grid of points within the bbox
+        mask = np.zeros_like(gray)
+        mask[y1:y2, x1:x2] = 255
+        
+        # Detect good features to track
+        points = cv2.goodFeaturesToTrack(gray, maxCorners=100, qualityLevel=0.01, 
+                                         minDistance=7, mask=mask)
+        
+        self.tracking_points = points
+        self.prev_gray = gray
+        
+    def _track_manual_selection(self, frame):
+        """Track manually selected region using optical flow"""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Initialize tracking points if needed
+        if self.tracking_points is None or self.prev_gray is None:
+            if self.selected_bbox:
+                self._initialize_optical_flow(frame, self.selected_bbox)
+                if self.tracking_points is None:
+                    print("Failed to initialize tracking points")
+                    self.reset_tracking()
+                    return None
+            else:
+                return None
+        
+        # Calculate optical flow
+        new_points, status, error = cv2.calcOpticalFlowPyrLK(
+            self.prev_gray, gray, self.tracking_points, None,
+            winSize=(15, 15), maxLevel=2,
+            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+        
+        # Select good points
+        if new_points is not None and status is not None:
+            good_new = new_points[status == 1]
+            good_old = self.tracking_points[status == 1]
+            
+            if len(good_new) < 4:
+                # Not enough points, try to reinitialize
+                self.lost_frames += 1
+                if self.lost_frames > 5:
+                    print("Lost manual tracking - not enough points")
+                    self.reset_tracking()
+                    return None
+            else:
+                self.lost_frames = 0
+                
+                # Calculate new bounding box from points
+                x_coords = good_new[:, 0]
+                y_coords = good_new[:, 1]
+                
+                x1 = int(np.min(x_coords))
+                y1 = int(np.min(y_coords))
+                x2 = int(np.max(x_coords))
+                y2 = int(np.max(y_coords))
+                
+                # Add some padding
+                padding = 10
+                x1 = max(0, x1 - padding)
+                y1 = max(0, y1 - padding)
+                x2 = min(frame.shape[1], x2 + padding)
+                y2 = min(frame.shape[0], y2 + padding)
+                
+                self.selected_bbox = (x1, y1, x2, y2)
+                self.tracking_points = good_new.reshape(-1, 1, 2)
+                self.prev_gray = gray.copy()
+                
+                # Create detection-like object
+                return {
+                    'bbox': (x1, y1, x2, y2),
+                    'confidence': 1.0,
+                    'class': -1,
+                    'class_name': 'Manual',
+                    'center_x': (x1 + x2) // 2,
+                    'center_y': (y1 + y2) // 2,
+                    'area': (x2 - x1) * (y2 - y1),
+                    'track_id': None
+                }
+        
+        return None
     
     def reset_tracking(self):
         """Reset tracking state"""
@@ -213,6 +328,9 @@ class ObjectTracker:
         self.prev_position = None
         self.prev_time = None
         self.prev_area = None
+        self.is_manual_tracking = False
+        self.tracking_points = None
+        self.prev_gray = None
     
     def find_clicked_object(self, detections, click_x, click_y):
         """Find object at click position"""

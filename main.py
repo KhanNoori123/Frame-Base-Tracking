@@ -5,11 +5,20 @@ Professional drone tracking system
 
 import time
 import math
+import sys
 from camera_manager import CameraManager
 from tracker import ObjectTracker
 from drone_interface import DroneInterface
 from ui_renderer import UIRenderer
-from config import DroneConfig
+from config import DroneConfig, CameraConfig
+
+# Import gazebo camera enabler
+try:
+    from gazebo_camera_on import enable_camera_stream
+    GAZEBO_CAMERA_AVAILABLE = True
+except ImportError:
+    GAZEBO_CAMERA_AVAILABLE = False
+    print("Warning: gazebo_camera_on.py not found")
 
 
 class DroneTrackingSystem:
@@ -20,6 +29,20 @@ class DroneTrackingSystem:
         print("=" * 60)
         print("Professional Drone Tracking System")
         print("=" * 60)
+        
+        # Enable Gazebo camera stream if using UDP stream
+        if CameraConfig.USE_UDP_STREAM and GAZEBO_CAMERA_AVAILABLE:
+            print("\nEnabling Gazebo camera stream...")
+            if enable_camera_stream():
+                print("Gazebo camera enabled successfully")
+                time.sleep(1)  # Give camera time to start
+            else:
+                print("Warning: Could not enable Gazebo camera")
+                print("If using Gazebo, make sure it's running")
+                response = input("Continue anyway? (y/n): ")
+                if response.lower() != 'y':
+                    print("Exiting...")
+                    sys.exit(1)
         
         # Initialize components
         self.camera = CameraManager()
@@ -34,6 +57,9 @@ class DroneTrackingSystem:
         self.last_command_time = time.time()
         self.last_yaw = 0
         self.last_z = 0
+        self.frame_counter = 0
+        self.last_detections = []
+        self.last_target = None
         
         # Setup drone
         self._setup_drone()
@@ -79,20 +105,49 @@ class DroneTrackingSystem:
             return
         
         current_time = time.time()
+        self.frame_counter += 1
         
-        # Detect objects
-        detections = self.tracker.detect(frame)
+        # Skip frames for performance (only run detection every Nth frame)
+        run_detection = (self.frame_counter % CameraConfig.SKIP_FRAMES == 0)
         
-        # Handle mouse click
-        click = self.ui.get_click()
-        if click:
-            clicked_obj = self.tracker.find_clicked_object(detections, click[0], click[1])
-            if clicked_obj:
-                self.tracker.lock_to_object(clicked_obj)
-        
-        # Select target
-        frame_center = self.camera.get_frame_center()
-        target = self.tracker.select_target(detections, frame_center)
+        if run_detection:
+            # Detect objects
+            detections = self.tracker.detect(frame)
+            self.last_detections = detections
+            
+            # Handle mouse click
+            click = self.ui.get_click()
+            if click:
+                clicked_obj = self.tracker.find_clicked_object(detections, click[0], click[1])
+                if clicked_obj:
+                    self.tracker.lock_to_object(clicked_obj)
+            
+            # Handle manual selection (drag)
+            manual_bbox = self.ui.get_manual_selection()
+            if manual_bbox:
+                # Create a manual detection object
+                x1, y1, x2, y2 = manual_bbox
+                manual_detection = {
+                    'bbox': manual_bbox,
+                    'confidence': 1.0,
+                    'class': -1,  # Manual selection
+                    'class_name': 'Manual',
+                    'center_x': (x1 + x2) // 2,
+                    'center_y': (y1 + y2) // 2,
+                    'area': (x2 - x1) * (y2 - y1),
+                    'track_id': None
+                }
+                self.tracker.lock_to_object(manual_detection)
+                print("Locked to manual selection")
+            
+            # Select target
+            frame_center = self.camera.get_frame_center()
+            target = self.tracker.select_target(detections, frame_center, frame)
+            self.last_target = target
+        else:
+            # Use cached detections and target
+            detections = self.last_detections
+            target = self.last_target
         
         # Process target
         yaw_rate = 0
@@ -101,7 +156,7 @@ class DroneTrackingSystem:
         velocity = {'vx': 0, 'vy': 0, 'vz': 0}
         
         if target is not None:
-            position = self.tracker.calculate_position_metrics(target, frame_center)
+            position = self.tracker.calculate_position_metrics(target, self.camera.get_frame_center())
             velocity = self.tracker.calculate_velocity(position, current_time)
             
             # Calculate control commands
@@ -113,10 +168,6 @@ class DroneTrackingSystem:
             if self.drone.control_enabled:
                 self.drone.send_velocity_command(0, 0, z_velocity, yaw_rate)
                 self.last_command_time = current_time
-                
-                # Debug output
-                print(f"dx={position['dx']:+4.0f}px, dy={position['dy']:+4.0f}px | "
-                      f"Yaw={yaw_rate:+5.1f}°/s, Z={z_velocity:+.2f}m/s")
         else:
             # No target - stop drone
             if self.drone.control_enabled:

@@ -6,15 +6,15 @@ class TrackingConfig:
     """Configuration for object tracking"""
     # YOLO Model
     MODEL_PATH = 'yolov8n.pt'
-    CONFIDENCE_THRESHOLD = 0.35
+    CONFIDENCE_THRESHOLD = 0.25  # Lowered for detecting simple 3D models
     
     # Tracking parameters
-    MAX_LOST_FRAMES = 15
-    IOU_WEIGHT = 0.4
-    DISTANCE_WEIGHT = 0.4
+    MAX_LOST_FRAMES = 30  # Increased from 15 for better persistence
+    IOU_WEIGHT = 0.5  # Increased IOU importance
+    DISTANCE_WEIGHT = 0.3
     SIZE_WEIGHT = 0.2
-    MIN_MATCH_SCORE = 0.25
-    MAX_TRACKING_DISTANCE = 200  # pixels
+    MIN_MATCH_SCORE = 0.3  # Increased from 0.25 for more stable matching
+    MAX_TRACKING_DISTANCE = 250  # Increased from 200 pixels
     
     # Detection
     TRACK_LARGEST = True
@@ -23,16 +23,26 @@ class TrackingConfig:
 
 class CameraConfig:
     """Configuration for camera/video input"""
+    # UDP Camera Stream Configuration
+    USE_UDP_STREAM = True  # Set to False to use regular webcam
+    UDP_HOST = "127.0.0.1"
+    UDP_PORT = 5600
+    
+    # Fallback video source (used when USE_UDP_STREAM = False)
     VIDEO_SOURCE = 0  # 0 for webcam, or path to video file
+    
     FRAME_WIDTH = None  # None = use default
     FRAME_HEIGHT = None  # None = use default
     FPS = 30
+    
+    # Stream optimization
+    SKIP_FRAMES = 1  # Process every Nth frame (1 = process all, 2 = skip every other frame)
 
 
 class DroneConfig:
     """Configuration for drone control"""
     # Connection
-    CONNECTION_STRING = 'udp:172.30.144.1:14551'
+    CONNECTION_STRING = 'udpin:0.0.0.0:14550'
     
     # Control parameters
     YAW_GAIN = 0.05

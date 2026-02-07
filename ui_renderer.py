@@ -28,22 +28,66 @@ class UIRenderer:
         self.click_y = 0
         self.click_detected = False
         
+        # Manual selection state
+        self.selecting = False
+        self.selection_start = None
+        self.selection_end = None
+        self.manual_bbox = None
+        
         # Create window
-        cv2.namedWindow(UIConfig.WINDOW_NAME)
+        cv2.namedWindow(UIConfig.WINDOW_NAME, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(UIConfig.WINDOW_NAME, 1300, 840)
         cv2.setMouseCallback(UIConfig.WINDOW_NAME, self._mouse_callback)
     
     def _mouse_callback(self, event, x, y, flags, param):
         """Handle mouse events"""
         if event == cv2.EVENT_LBUTTONDOWN:
+            # Start selection
+            self.selecting = True
+            self.selection_start = (x, y)
+            self.selection_end = (x, y)
             self.click_x = x
             self.click_y = y
-            self.click_detected = True
+            
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if self.selecting:
+                self.selection_end = (x, y)
+                
+        elif event == cv2.EVENT_LBUTTONUP:
+            if self.selecting:
+                self.selection_end = (x, y)
+                self.selecting = False
+                
+                # Check if it's a click (small movement) or a drag (selection)
+                dx = abs(self.selection_end[0] - self.selection_start[0])
+                dy = abs(self.selection_end[1] - self.selection_start[1])
+                
+                if dx < 10 and dy < 10:
+                    # It's a click
+                    self.click_detected = True
+                    self.manual_bbox = None
+                else:
+                    # It's a selection - create manual bbox
+                    x1 = min(self.selection_start[0], self.selection_end[0])
+                    y1 = min(self.selection_start[1], self.selection_end[1])
+                    x2 = max(self.selection_start[0], self.selection_end[0])
+                    y2 = max(self.selection_start[1], self.selection_end[1])
+                    self.manual_bbox = (x1, y1, x2, y2)
+                    self.click_detected = True
     
     def get_click(self):
         """Get and reset click state"""
         if self.click_detected:
             self.click_detected = False
             return self.click_x, self.click_y
+        return None
+    
+    def get_manual_selection(self):
+        """Get and reset manual selection bbox"""
+        if self.manual_bbox:
+            bbox = self.manual_bbox
+            self.manual_bbox = None
+            return bbox
         return None
     
     def draw_frame(self, frame, target, position, velocity, all_detections, 
@@ -64,6 +108,12 @@ class UIRenderer:
         Returns:
             Rendered frame
         """
+        # Draw selection rectangle if selecting
+        if self.selecting and self.selection_start and self.selection_end:
+            cv2.rectangle(frame, self.selection_start, self.selection_end, (255, 255, 0), 2)
+            cv2.putText(frame, "Release to select region", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+        
         # Draw center crosshair
         self._draw_crosshair(frame)
         
@@ -170,7 +220,7 @@ class UIRenderer:
     
     def _draw_no_target_message(self, frame):
         """Draw no target message"""
-        cv2.putText(frame, "No target - Click to select", (10, 30), 
+        cv2.putText(frame, "No target - Click or Drag to select", (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, UIConfig.COLOR_WARNING, 2)
     
     def _draw_status_bar(self, frame, control_enabled, tracking_locked, fps):
