@@ -91,7 +91,7 @@ class UIRenderer:
         return None
     
     def draw_frame(self, frame, target, position, velocity, all_detections, 
-                   tracking_locked, control_enabled, fps=0):
+                   tracking_locked, control_enabled, fps=0, altitude_control_enabled=False):
         """
         Draw complete UI on frame
         
@@ -104,6 +104,7 @@ class UIRenderer:
             tracking_locked: Boolean tracking lock state
             control_enabled: Boolean control state
             fps: Current FPS
+            altitude_control_enabled: Boolean altitude control state
             
         Returns:
             Rendered frame
@@ -135,7 +136,7 @@ class UIRenderer:
             self._draw_no_target_message(frame)
         
         # Draw status bar
-        self._draw_status_bar(frame, control_enabled, tracking_locked, fps)
+        self._draw_status_bar(frame, control_enabled, tracking_locked, fps, altitude_control_enabled)
         
         return frame
     
@@ -223,7 +224,7 @@ class UIRenderer:
         cv2.putText(frame, "No target - Click or Drag to select", (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, UIConfig.COLOR_WARNING, 2)
     
-    def _draw_status_bar(self, frame, control_enabled, tracking_locked, fps):
+    def _draw_status_bar(self, frame, control_enabled, tracking_locked, fps, altitude_control_enabled=False):
         """Draw status bar at bottom"""
         y_pos = self.frame_height - 10
         
@@ -238,6 +239,13 @@ class UIRenderer:
             cv2.putText(frame, "LOCKED - Press 'r' to unlock", 
                        (10, y_pos), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+        # Altitude control status
+        alt_status = "ON" if altitude_control_enabled else "OFF"
+        alt_color = (0, 255, 0) if altitude_control_enabled else (128, 128, 128)
+        cv2.putText(frame, f"Alt: {alt_status}", 
+                   (self.frame_width - 380, y_pos), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, alt_color, 2)
         
         # FPS
         if UIConfig.SHOW_FPS and fps > 0:

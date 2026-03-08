@@ -126,48 +126,38 @@ class DroneInterface:
         Send velocity command to drone
         
         Args:
-            vx: X velocity (m/s)
-            vy: Y velocity (m/s)
-            vz: Z velocity (m/s)
+            vx: X velocity (m/s) - forward/backward in body frame
+            vy: Y velocity (m/s) - left/right in body frame
+            vz: Z velocity (m/s) - up/down in NED frame (positive = down)
             yaw_rate: Yaw rate (deg/s)
         """
         if not self.control_enabled:
             return
         
-        # Send Z velocity
-        type_mask = 0b0000_1111_1111_0111
-        self.master.mav.set_position_target_local_ned_send(
-            0,
-            self.master.target_system,
-            self.master.target_component,
-            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
-            type_mask,
-            0, 0, 0,
-            vx, vy, vz,
-            0, 0, 0,
-            0, 0
+        # Type mask: bit set to 1 means IGNORE that field
+        # We want to USE velocity (vx, vy, vz) and yaw_rate
+        # Bits: pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, acc_x, acc_y, acc_z, force, yaw, yaw_rate
+        # Binary: 0b0000_1111_1100_0111
+        # Ignore: position (bits 0-2), acceleration (bits 6-8), force (bit 9), yaw (bit 10)
+        # Use: velocity (bits 3-5), yaw_rate (bit 11)
+        type_mask = (
+            0b0000_0100_0000_0111  # Ignore pos, acc, yaw; Use velocity and yaw_rate
         )
         
-        # Send yaw via RC override
-        self._send_rc_yaw(yaw_rate)
-    
-    def _send_rc_yaw(self, yaw_rate_deg):
-        """Send yaw command via RC override"""
-        yaw_center = 1500
-        yaw_range = 400
+        # Convert yaw rate from deg/s to rad/s
+        yaw_rate_rad = math.radians(yaw_rate)
         
-        if abs(yaw_rate_deg) < 0.1:
-            yaw_pwm = yaw_center
-        else:
-            yaw_pwm = int(yaw_center + (yaw_rate_deg / self.max_yaw_rate) * yaw_range)
-            yaw_pwm = max(1100, min(1900, yaw_pwm))
-        
-        self.master.mav.rc_channels_override_send(
+        self.master.mav.set_position_target_local_ned_send(
+            0,  # time_boot_ms (not used)
             self.master.target_system,
             self.master.target_component,
-            65535, 65535, 65535,  # Don't override roll, pitch, throttle
-            yaw_pwm,  # Yaw
-            65535, 65535, 65535, 65535
+            mavutil.mavlink.MAV_FRAME_BODY_NED,  # Use BODY frame for vx, vy
+            type_mask,
+            0, 0, 0,  # x, y, z positions (ignored)
+            vx, vy, vz,  # x, y, z velocity in m/s
+            0, 0, 0,  # x, y, z acceleration (ignored)
+            0,  # yaw (ignored)
+            yaw_rate_rad  # yaw_rate in rad/s
         )
     
     def stop(self):
@@ -191,3 +181,90 @@ class DroneInterface:
             self.disable_control()
         else:
             self.enable_control()
+    
+    def takeoff(self, altitude=5.0):
+        """
+        Command drone to takeoff to specified altitude
+        
+        Args:
+            altitude: Target altitude in meters
+        """
+        print(f"Taking off to {altitude}m...")
+        self.master.mav.command_long_send(
+            self.master.target_system,
+            self.master.target_component,
+            mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+            0,  # confirmation
+            0, 0, 0, 0,  # params 1-4
+            0, 0,  # latitude, longitude (not used in GUIDED)
+            altitude  # altitude
+        )
+        print(f"Takeoff command sent")
+    
+    def land(self):
+        """Command drone to land"""
+        print("Landing...")
+        self.master.mav.command_long_send(
+            self.master.target_system,
+            self.master.target_component,
+            mavutil.mavlink.MAV_CMD_NAV_LAND,
+            0,  # confirmation
+            0, 0, 0, 0,  # params 1-4
+            0, 0, 0  # latitude, longitude, altitude
+        )
+        print("Land command sent")
+    
+    def get_comprehensive_telemetry(self):
+        """
+        Get comprehensive telemetry data for UI display
+        
+        Returns:
+            dict: Complete telemetry data including all flight parameters
+        """
+        telemetry = {
+            'mode': self.get_mode(),
+            'armed': self.is_armed(),
+            'altitude': 0.0,
+            'roll': 0.0,
+            'pitch': 0.0,
+            'yaw': 0.0,
+            'vx': 0.0,
+            'vy': 0.0,
+            'vz': 0.0,
+            'groundspeed': 0.0,
+            'lat': 0.0,
+            'lon': 0.0,
+            'battery_voltage': 0.0,
+            'heading': 0.0
+        }
+        
+        # Get attitude data (roll, pitch, yaw)
+        msg = self.master.recv_match(type='ATTITUDE', blocking=False)
+        if msg:
+            telemetry['roll'] = math.degrees(msg.roll)
+            telemetry['pitch'] = math.degrees(msg.pitch)
+            telemetry['yaw'] = math.degrees(msg.yaw)
+        
+        # Get position and velocity data
+        msg = self.master.recv_match(type='GLOBAL_POSITION_INT', blocking=False)
+        if msg:
+            telemetry['altitude'] = msg.relative_alt / 1000.0  # Convert mm to m
+            telemetry['vx'] = msg.vx / 100.0  # Convert cm/s to m/s
+            telemetry['vy'] = msg.vy / 100.0
+            telemetry['vz'] = msg.vz / 100.0
+            telemetry['lat'] = msg.lat / 1e7
+            telemetry['lon'] = msg.lon / 1e7
+            telemetry['heading'] = msg.hdg / 100.0  # Convert centidegrees to degrees
+        
+        # Get VFR HUD data (ground speed, altitude)
+        msg = self.master.recv_match(type='VFR_HUD', blocking=False)
+        if msg:
+            telemetry['groundspeed'] = msg.groundspeed
+            telemetry['altitude'] = msg.alt  # Barometric altitude
+        
+        # Get battery data
+        msg = self.master.recv_match(type='SYS_STATUS', blocking=False)
+        if msg:
+            telemetry['battery_voltage'] = msg.voltage_battery / 1000.0  # Convert mV to V
+        
+        return telemetry

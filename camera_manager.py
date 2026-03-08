@@ -35,15 +35,16 @@ class CameraManager:
         # Check if UDP stream should be used
         if CameraConfig.USE_UDP_STREAM:
             # Build GStreamer pipeline for UDP stream with optimizations
+            # Key changes: sync=false to prevent blocking, emit-signals for better control
             pipeline = (
                 f"udpsrc address={CameraConfig.UDP_HOST} port={CameraConfig.UDP_PORT} "
                 "caps=\"application/x-rtp,media=(string)video,clock-rate=(int)90000,encoding-name=(string)H264\" ! "
-                "rtpjitterbuffer latency=0 drop-on-latency=true ! "
+                "rtpjitterbuffer latency=50 drop-on-latency=true ! "
                 "rtph264depay ! "
                 "h264parse ! "
-                "avdec_h264 max-threads=2 skip-frame=default ! "
+                "avdec_h264 max-threads=2 ! "
                 "videoconvert ! "
-                "appsink drop=true max-buffers=1"
+                "appsink drop=true max-buffers=2 sync=false emit-signals=true"
             )
             print(f"Initializing UDP camera stream: {CameraConfig.UDP_HOST}:{CameraConfig.UDP_PORT}")
             self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
@@ -85,7 +86,16 @@ class CameraManager:
         Returns:
             tuple: (success, frame)
         """
-        ret, frame = self.cap.read()
+        # For UDP streams, use grab() first to clear buffer and prevent blocking
+        if CameraConfig.USE_UDP_STREAM:
+            # Grab the latest frame (non-blocking)
+            if not self.cap.grab():
+                return False, None
+            # Retrieve the frame
+            ret, frame = self.cap.retrieve()
+        else:
+            ret, frame = self.cap.read()
+        
         if ret:
             self.frame_count += 1
         return ret, frame

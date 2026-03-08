@@ -6,19 +6,24 @@ class TrackingConfig:
     """Configuration for object tracking"""
     # YOLO Model
     MODEL_PATH = 'yolov8n.pt'
-    CONFIDENCE_THRESHOLD = 0.25  # Lowered for detecting simple 3D models
+    CONFIDENCE_THRESHOLD = 0.20  # Lower threshold for better detection
+    USE_GPU = True  # Enable GPU acceleration if available (CUDA)
     
-    # Tracking parameters
-    MAX_LOST_FRAMES = 30  # Increased from 15 for better persistence
-    IOU_WEIGHT = 0.5  # Increased IOU importance
-    DISTANCE_WEIGHT = 0.3
-    SIZE_WEIGHT = 0.2
-    MIN_MATCH_SCORE = 0.3  # Increased from 0.25 for more stable matching
-    MAX_TRACKING_DISTANCE = 250  # Increased from 200 pixels
+    # Tracking parameters - IMPROVED FOR ROBUSTNESS
+    MAX_LOST_FRAMES = 50  # Much longer persistence (was 30)
+    IOU_WEIGHT = 0.6  # Higher IOU importance for better matching
+    DISTANCE_WEIGHT = 0.25
+    SIZE_WEIGHT = 0.15
+    MIN_MATCH_SCORE = 0.20  # Lower threshold to maintain tracking (was 0.3)
+    MAX_TRACKING_DISTANCE = 300  # Allow larger movement between frames
     
-    # Detection
+    # Detection enhancement
     TRACK_LARGEST = True
     SELECTED_CLASS = None  # None = all classes
+    
+    # Temporal smoothing
+    USE_KALMAN_FILTER = True  # Enable Kalman filtering for prediction
+    PREDICTION_WEIGHT = 0.3  # Weight for predicted position when lost
 
 
 class CameraConfig:
@@ -26,7 +31,7 @@ class CameraConfig:
     # UDP Camera Stream Configuration
     USE_UDP_STREAM = True  # Set to False to use regular webcam
     UDP_HOST = "127.0.0.1"
-    UDP_PORT = 5600
+    UDP_PORT = 5602
     
     # Fallback video source (used when USE_UDP_STREAM = False)
     VIDEO_SOURCE = 0  # 0 for webcam, or path to video file
@@ -78,3 +83,36 @@ class UIConfig:
     SHOW_ALL_DETECTIONS = True
     SHOW_FPS = True
     SHOW_TRACKING_INFO = True
+
+
+class IBVSConfig:
+    """Configuration for Image-Based Visual Servoing"""
+    # Target object size in image (pixels squared)
+    TARGET_AREA = 15000   # Optimal distance - target to maintain (reduced from 80000)
+    MIN_AREA = 1000       # Too far - move forward fast (reduced from 5000)
+    MAX_AREA = 30000      # Too close - stop or back up (reduced from 150000)
+    AREA_DEADZONE = 2000  # Area tolerance for "optimal" distance (reduced from 8000)
+    
+    # Control gains
+    FORWARD_GAIN = 0.00008   # Forward velocity gain - INCREASED for faster response
+    YAW_GAIN = 0.05          # Yaw rate gain (deg/s per pixel)
+    ALTITUDE_GAIN = 0.003    # Altitude velocity gain (m/s per pixel)
+    
+    # Speed limits - TUNED FOR FASTER APPROACH
+    MAX_FORWARD_SPEED = 4.0   # Maximum forward speed (m/s) - INCREASED from 2.5
+    MIN_FORWARD_SPEED = 0.2   # Minimum forward speed (m/s) - lower for final approach
+    MAX_YAW_RATE = 45         # Maximum yaw rate (deg/s)
+    MAX_ALTITUDE_SPEED = 0.5  # Maximum altitude change speed (m/s)
+    
+    # Deadzones
+    YAW_DEADZONE = 20         # Horizontal centering deadzone (pixels)
+    ALTITUDE_DEADZONE = 20    # Vertical centering deadzone (pixels)
+    
+    # Stopping algorithm parameters
+    STOP_CONFIRMATION_FRAMES = 5  # Frames to confirm at target (hysteresis)
+    PREDICTIVE_BRAKING_THRESHOLD = 10  # Frames ahead to start braking
+    SAFETY_BUFFER_RATIO = 0.7  # Start extra slowing at 70% of target area
+    
+    # Control mode
+    USE_ALTITUDE_CONTROL = False  # Disable by default - toggle with 'z' key
+    USE_IBVS_CONTROL = True      # Use IBVS instead of basic control

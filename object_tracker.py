@@ -11,9 +11,19 @@ class ObjectTracker:
         self.center_x = self.frame_width // 2
         self.center_y = self.frame_height // 2
         
-        # Load YOLO model
+        # Load YOLO model with GPU support
         print(f"Loading YOLO model: {model_path}")
         self.model = YOLO(model_path)
+        
+        # Check if CUDA is available and move model to GPU
+        import torch
+        if torch.cuda.is_available():
+            print(f"GPU detected: {torch.cuda.get_device_name(0)}")
+            print("Running detection on GPU")
+            self.device = 'cuda'
+        else:
+            print("No GPU detected, running on CPU")
+            self.device = 'cpu'
         
         # Previous position and time for velocity calculation
         self.prev_position = None
@@ -36,8 +46,8 @@ class ObjectTracker:
         
     def detect_objects_yolo(self, frame, confidence_threshold=0.5):
         """Detect objects using YOLO"""
-        # Use tracking mode for better temporal consistency
-        results = self.model.track(frame, persist=True, verbose=False, conf=confidence_threshold)
+        # Use tracking mode for better temporal consistency with GPU
+        results = self.model.track(frame, persist=True, verbose=False, conf=confidence_threshold, device=self.device)
         detections = []
         
         for result in results:

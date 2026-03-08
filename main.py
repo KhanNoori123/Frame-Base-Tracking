@@ -10,7 +10,8 @@ from camera_manager import CameraManager
 from tracker import ObjectTracker
 from drone_interface import DroneInterface
 from ui_renderer import UIRenderer
-from config import DroneConfig, CameraConfig
+from ibvs_controller import IBVSController
+from config import DroneConfig, CameraConfig, IBVSConfig
 
 # Import gazebo camera enabler
 try:
@@ -48,6 +49,7 @@ class DroneTrackingSystem:
         self.camera = CameraManager()
         self.tracker = ObjectTracker()
         self.drone = DroneInterface()
+        self.ibvs = IBVSController(IBVSConfig)
         
         frame_width, frame_height = self.camera.get_frame_dimensions()
         self.ui = UIRenderer(frame_width, frame_height)
@@ -60,6 +62,8 @@ class DroneTrackingSystem:
         self.frame_counter = 0
         self.last_detections = []
         self.last_target = None
+        self.debug_counter = 0  # For reducing debug output
+        self.altitude_control_enabled = False  # Toggle for vertical tracking
         
         # Setup drone
         self._setup_drone()
@@ -150,40 +154,55 @@ class DroneTrackingSystem:
             target = self.last_target
         
         # Process target
-        yaw_rate = 0
-        z_velocity = 0
         position = None
         velocity = {'vx': 0, 'vy': 0, 'vz': 0}
+        control_output = None
         
         if target is not None:
             position = self.tracker.calculate_position_metrics(target, self.camera.get_frame_center())
             velocity = self.tracker.calculate_velocity(position, current_time)
             
-            # Calculate control commands
-            yaw_rate, z_velocity = self.drone.calculate_control_commands(position)
+            # Calculate control commands using IBVS
+            control_output = self.ibvs.calculate_control(position)
+            
+            vx = control_output['vx']
+            vy = control_output['vy']
+            vz = control_output['vz'] if self.altitude_control_enabled else 0  # Only use vz if enabled
+            yaw_rate = control_output['yaw_rate']
+            
             self.last_yaw = yaw_rate
-            self.last_z = z_velocity
+            self.last_z = vz
             
             # Send commands
             if self.drone.control_enabled:
-                self.drone.send_velocity_command(0, 0, z_velocity, yaw_rate)
+                self.drone.send_velocity_command(vx, vy, vz, yaw_rate)
                 self.last_command_time = current_time
+                
+                # Debug output (every 5 frames to reduce spam)
+                self.debug_counter += 1
+                if self.debug_counter % 5 == 0:
+                    area_info = f"Area: {position['area']:.0f}px² (target: {self.ibvs.target_area})"
+                    print(f"IBVS: {self.ibvs.get_status_string(control_output)} | {area_info}")
         else:
-            # No target - stop drone
+            # No target - stop drone and reset IBVS state
             if self.drone.control_enabled:
                 self.drone.stop()
                 self.last_yaw = 0
                 self.last_z = 0
+            self.ibvs.reset_stopping_state()
         
         # Resend commands periodically
-        if self.drone.control_enabled and (current_time - self.last_command_time) > DroneConfig.COMMAND_RATE:
-            self.drone.send_velocity_command(0, 0, self.last_z, self.last_yaw)
+        if self.drone.control_enabled and (current_time - self.last_command_time) > DroneConfig.COMMAND_RATE and control_output:
+            vx = control_output['vx']
+            vy = control_output['vy']
+            self.drone.send_velocity_command(vx, vy, self.last_z, self.last_yaw)
             self.last_command_time = current_time
         
         # Render UI
         fps = self.camera.get_fps()
         frame = self.ui.draw_frame(frame, target, position, velocity, detections,
-                                   self.tracker.tracking_locked, self.drone.control_enabled, fps)
+                                   self.tracker.tracking_locked, self.drone.control_enabled, fps, 
+                                   self.altitude_control_enabled)
         self.ui.show(frame)
         
         # Handle keyboard input
@@ -199,6 +218,7 @@ class DroneTrackingSystem:
             self.drone.toggle_control()
         elif key == ord('r'):
             self.tracker.reset_tracking()
+            self.ibvs.reset_stopping_state()
             print("Tracking reset")
         elif key == ord('i'):
             self.drone.invert_yaw = not self.drone.invert_yaw
@@ -215,6 +235,10 @@ class DroneTrackingSystem:
                 self.tracker.track_largest = not self.tracker.track_largest
                 mode = "Largest" if self.tracker.track_largest else "Closest"
                 print(f"Tracking mode: {mode}")
+        elif key == ord('z'):
+            self.altitude_control_enabled = not self.altitude_control_enabled
+            status = "ENABLED" if self.altitude_control_enabled else "DISABLED"
+            print(f"Altitude control: {status}")
     
     def _print_controls(self):
         """Print control instructions"""
@@ -224,6 +248,7 @@ class DroneTrackingSystem:
         print("SPACE  - Enable/Disable drone control")
         print("Click  - Lock tracking to object")
         print("r      - Reset tracking")
+        print("z      - Toggle altitude control (vertical tracking)")
         print("i      - Invert yaw direction")
         print("k      - Invert Z direction")
         print("g      - Set GUIDED mode")
