@@ -5,7 +5,7 @@ Configuration module for drone tracking system
 class TrackingConfig:
     """Configuration for object tracking"""
     # YOLO Model
-    MODEL_PATH = 'yolov8n.pt'
+    MODEL_PATH = 'models/yolov8n.pt'
     CONFIDENCE_THRESHOLD = 0.20  # Lower threshold for better detection
     USE_GPU = True  # Enable GPU acceleration if available (CUDA)
     

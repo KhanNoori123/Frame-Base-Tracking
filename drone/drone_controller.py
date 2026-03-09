@@ -1,7 +1,7 @@
 import time
 import math
 from pymavlink import mavutil
-from object_tracker import ObjectTracker
+from tracking.object_tracker import ObjectTracker
 
 class DroneController:
     def __init__(self, connection_string='udp:172.30.144.1:14551'):

@@ -1,0 +1,5 @@
+# Place YOLO model weights here
+# - yolov8n.pt (nano - fastest)
+# - yolov8s.pt (small)
+# - yolov8m.pt (medium)
+# - yolov8l.pt (large - most accurate)

@@ -6,7 +6,7 @@ Handles MAVLink communication and drone control
 import time
 import math
 from pymavlink import mavutil
-from config import DroneConfig
+from config.settings import DroneConfig
 
 
 class DroneInterface:

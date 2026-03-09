@@ -4,7 +4,7 @@ Handles all visual display and user interface
 """
 
 import cv2
-from config import UIConfig
+from config.settings import UIConfig
 
 
 class UIRenderer:

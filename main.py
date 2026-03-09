@@ -6,16 +6,16 @@ Professional drone tracking system
 import time
 import math
 import sys
-from camera_manager import CameraManager
-from tracker import ObjectTracker
-from drone_interface import DroneInterface
-from ui_renderer import UIRenderer
-from ibvs_controller import IBVSController
-from config import DroneConfig, CameraConfig, IBVSConfig
+from camera.camera_manager import CameraManager
+from tracking.tracker import ObjectTracker
+from drone.drone_interface import DroneInterface
+from interface.ui_renderer import UIRenderer
+from drone.ibvs_controller import IBVSController
+from config.settings import DroneConfig, CameraConfig, IBVSConfig
 
 # Import gazebo camera enabler
 try:
-    from gazebo_camera_on import enable_camera_stream
+    from simulation.gazebo_camera_on import enable_camera_stream
     GAZEBO_CAMERA_AVAILABLE = True
 except ImportError:
     GAZEBO_CAMERA_AVAILABLE = False

@@ -6,7 +6,7 @@ Handles YOLO detection and object tracking logic
 import numpy as np
 import cv2
 from ultralytics import YOLO
-from config import TrackingConfig
+from config.settings import TrackingConfig
 
 
 class ObjectTracker:

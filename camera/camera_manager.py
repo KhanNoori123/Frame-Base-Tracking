@@ -5,7 +5,7 @@ Handles video capture and frame processing
 
 import cv2
 import time
-from config import CameraConfig
+from config.settings import CameraConfig
 
 
 class CameraManager:
